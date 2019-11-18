@@ -7,7 +7,7 @@ import time,datetime
 import json
 import random
 import threading
-from multiprocessing import Pool
+from multiprocessing import Process,Queue
 from urllib import parse
 import requests
 import concurrent.futures
@@ -20,17 +20,18 @@ from fake_useragent import UserAgent
 # chrome_options = Options()
 # chrome_options.add_experimental_option("mobileEmulation", mobile_emulation)
 #driver = webdriver.Chrome(chrome_options = chrome_options)
-ua=UserAgent()
-ipList=["141.223.132.163:80","222.112.240.154:80","121.165.92.44:8080","175.125.216.117:8080","112.218.215.140:8080"
-    ,"112.168.11.170:808","222.121.116.26:55149","211.244.224.130:8080","183.111.26.15:8080","119.192.179.46:45447"
-    ,"222.121.116.26:57074","118.176.244.226:8080","210.107.78.173:3128","222.112.240.154:80","222.112.240.141:80"
-    ,"121.139.218.165:31409","119.192.179.46:31990","183.111.26.15:8080","103.211.76.5:8080","27.116.51.115:8080"
-    ,"36.92.22.70:8080","103.248.198.37:8080","178.77.238.2:8080","45.32.107.74:8080","50.235.28.146:3128","198.11.178.14:8080"
-    ]
-shopList=[]
+
+
+shopList=Queue()
 completeCount=0 
 
-def test(shop) :    
+def getItems(shop) :   
+    ua=UserAgent()
+    ipList=["112.217.199.122:55872","121.139.218.165:31409","183.111.26.15:8080","211.203.234.141:8080","222.121.116.26:47314"
+    ,"115.21.163.39:8888","1.215.70.130:44072","210.107.78.173:3128","112.168.11.170:808","222.121.116.26:55149","175.125.216.117:8080"
+    ,"211.244.224.130:8080","106.10.55.212:3128","119.192.195.83:8080","213.109.133.156:8080","23.237.173.102:3128","216.198.188.26:51068"
+    ,"209.212.33.99:8080","64.20.33.202:8080","35.245.208.185:3128"
+    ] 
     file = open("data/"+shop[0]+".txt","w",encoding="utf-8")
     stime=datetime.datetime.now().replace(microsecond=0)
     pageCount=1
@@ -42,9 +43,12 @@ def test(shop) :
         url="https://search.shopping.naver.com/search/all.nhn?origQuery="+str(parse.quote(shop[0]))+"&mall="+shop[1]+"&pagingIndex="+str(pageCount)+"&pagingSize=80&viewType=list&sort=rel&frm=NVSHPAG&query="+str(parse.quote(shop[0]))
         headers={"User-Agent":ua.random}
         try:
-            req=requests.get(url,headers=headers,proxies=proxies)
+            req=requests.get(url,headers=headers,proxies=proxies,timeout=1)
             source = req.text
-            bs=BeautifulSoup(source,"html.parser",from_encoding="euc-kr")
+            bs=BeautifulSoup(source,"html.parser")
+            print(bs.find("title").text)
+            if(bs.find("title").text == "서비스 접근 권한이 없습니다 : 네이버쇼핑"):
+                raise Exception
             items=bs.find_all("li",{"class":"_itemSection"})
             for item in items:
                 itemCount+=1
@@ -59,12 +63,14 @@ def test(shop) :
         except:
             nextBtn=1
         
-    print(shop[0]+"\t close take "+str(datetime.datetime.now().replace(microsecond=0)-stime)+" get "+str(itemCount)+" items")
-    global completeCount
-    completeCount+=1
+    print(shop[0]+"\t close take "+str(datetime.datetime.now().replace(microsecond=0)-stime)+" get "+str(itemCount)+" items\n")
     file.close()
 
-def getShopList(driver):
+def getShopList():
+    driver = webdriver.PhantomJS()
+    url="https://search.shopping.naver.com/mall/mall.nhn"
+    driver.get(url)
+    element = driver.find_element_by_id('gift_shopn').click()
     nextBtn=1
     pageCount=0
     while(nextBtn!=None):
@@ -80,32 +86,34 @@ def getShopList(driver):
             end=aTag['onfocus'].rfind("}")+1
             atr=aTag['onfocus'][start:end].replace("'",'"')
             ss=json.loads(atr)
-            shopList.append([ss['name'],ss['seq']])
+            shopList.put([ss['name'],ss['seq']])
         nextBtn=bs.find("a",{"class":"next"})    
     driver.close()
- 
-stime=datetime.datetime.now().replace(microsecond=0)
-print("start !!"+str(stime))
-driver = webdriver.PhantomJS()
-url="https://search.shopping.naver.com/mall/mall.nhn"
-driver.get(url)
-element = driver.find_element_by_id('gift_shopn').click()
-time.sleep(1)
-gsl=threading.Thread(target=getShopList,args=(driver,))
-gsl.start()
 
-ing=[]
-time.sleep(10)
-pool=Pool(processes=16)
-while(len(shopList)!=0):
-    for t in ing:
-        if not t.isAlive():
-            ing.remove(t)
-    if len(ing)<16:
-        # t=threading.Thread(target=test,args=(shopList.pop(),))
-        # t.start()
-        pool.map(test,(shopList.pop(),))
-        print(str(completeCount/len(shopList))+"% ("+str(completeCount)+"/"+str(len(shopList))+") 완료",end="\r")
-        #ing.append(t)
-print("close!!!"+str(stime-datetime.datetime.now().replace(microsecond=0)))
-input("press Enter")
+
+if __name__ == '__main__':
+    stime=datetime.datetime.now().replace(microsecond=0)
+    print("start !!"+str(stime))
+    gsl=threading.Thread(target=getShopList)
+    gsl.start()
+
+    ing=[]
+    time.sleep(10)
+
+    while(shopList.qsize()!=0):
+        for t in ing:
+            if not t.is_alive():
+                ing.remove(t)
+                completeCount+=1
+
+        if len(ing)<16:
+            # threading #
+            # t=threading.Thread(target=test,args=(shopList.pop(),))
+            # t.start()
+            # ing.append(t)
+            t=Process(target=getItems,args=(shopList.get(),))
+            t.start()
+            ing.append(t)
+            print(str(completeCount/shopList.qsize())+"% ("+str(completeCount)+"/"+str(shopList.qsize())+") 완료",end="\r")
+    print("close!!!"+str(stime-datetime.datetime.now().replace(microsecond=0)))
+    input("press Enter")
